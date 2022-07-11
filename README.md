@@ -4,7 +4,7 @@ Applications were designed for Windows and come with MSVC 2010 .sln files
 
 Server Information  
 ==================  
-Usage: tftp_server.exe [port] [max_num_connections] [sharepath]  
+**Usage: tftp_server.exe [port] [max_num_connections] [sharepath]**  
 (defaults are 69,100,C:\share\)  
 
 Configurable parameters (recompile required):  
@@ -14,7 +14,7 @@ This parameter is currently set to 2 MB.  The optimal value will vary based on t
 
 Client Information
 ==================
-Usage: tftp_client.exe (No parameters, Winapi GUI Program)  
+**Usage: tftp_client.exe (No parameters, Winapi GUI Program)**  
 
 Configurable parameters (recompile required):  
 In clientMain.cpp:  
