@@ -8,7 +8,7 @@ Server Information
 ==================  
 **Usage: tftp_server.exe [port] [max_num_connections] [sharepath] [readBufferSizeBytes]**  
 (defaults are 69, 100, C:\share\, 4194304)  
-Note:  If running server and client on the same PC, some 10054 errors may be reported at the end of each successful transfer when the client closes the connection.  These can be ignored.  
+Note:  If running server and client on the same PC, some Winsock 10054 errors may be reported at the end of each successful transfer when the client closes the connection.  These can be ignored.  
 
 
 Client Information
