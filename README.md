@@ -1,5 +1,6 @@
 # Hybrid-TFTP-Application
 Software developed for URI Masters Thesis “Development of a Hybrid TFTP Application”  
+This is a proposed enhanced version of the TFTP protocol, allowing for directory retrieval, fast multi-threaded downloads, and file verification.  
 Applications were designed for Windows and come with MSVC 2010 .sln files  
 
 
