@@ -31,11 +31,6 @@
 #define OPC_AUTOD       (short) 0x99   /* Auto Detect Rqst     */
 #define OPC_AUTODR      (short) 0x98   /* Auto Detect Reply    */
 #define OPC_RESTRT      (short) 0x90   /* Transfer Restart Msg */
-#define OPC_P2P_SENDREQ (short) 0x91   /* P2P Send Request Msg */
-#define OPC_DISCONNECT  (short) 0x80   /* Disconnect Msg       */
-#define OPC_DISCON_RPLY (short) 0x81   /* Disconnect Reply     */
-#define OPC_KEEPALIVE   (short) 0x82   /* Keepalive Msg        */
-#define OPC_KEEPA_RPLY  (short) 0x83   /* Keepalive Reply      */
 
 /* TFTP Error Codes (16-bit integer) */
 #define ERR_NOT_DEFINED                (short) 0x0 /*See ERR message (if any)*/
@@ -52,18 +47,14 @@
 /**************/
 /* Structures */
 /**************/
-
-/* Structure to hold TFTP Options Parameters */
 typedef struct
 {
-    int blkSizeNeg;    /* BLK Size Negotion on?        */
-    int timeoutNeg;    /* Timeout Size Negotion on?    */
-    int tsizeNeg;      /* TX Size Negotion on?         */
-    int blkSize;       /* Block size to use            */
-    int timeout;       /* Timeout in seconds to use    */
-    __int64 tsize;     /* Size of transferring file    */
-    int resume;        /* Is this a resumed file xfer? */
-    unsigned __int64 offset; /* File offset for resume */
+    int blkSizeNeg;
+    int timeoutNeg;
+    int tsizeNeg;
+    int blkSize;
+    int timeout;
+    __int64 tsize;
 }optsData;
 
 
@@ -86,17 +77,6 @@ struct connection_data{
   char* mode;
   optsData options;
 };
-
-/* Struct for Peer File Transfers */
-typedef struct
-{
-    char ipaddr[32];
-    char filename[400];
-    unsigned __int64 offset;
-    unsigned short port;
-    unsigned short blockID;
-    unsigned int sessionID;
-}remoteP2PStruct;
 
 
 #endif

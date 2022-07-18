@@ -23,10 +23,9 @@
 int sendServerDiscoveryRqst(SOCKET sock, int timeoutSeconds);
 int serverFailDetect(char* ipaddress);
 static int checkAutoDRMsg(char* inbuff,int* maxClients,int* currentClients);
-int getServerDirectoryListing(char* serverIPAddress, int p2pMode);
+int getServerDirectoryListing(char* serverIPAddress);
 int initiateConnection(SOCKET sock, char* ipaddress, int timeoutSeconds,
-                       int desiredConnects, int* allowedConnects,
-                       int p2pMode);
+                       int desiredConnects, int* allowedConnects);
 static int checkConnReplyMsg(char* inbuff,int* accept,int* allowedConnects);
 
 
@@ -240,8 +239,8 @@ static int checkAutoDRMsg(char* inbuff,int* maxClients,int* currentClients)
     }
 
     /* Appears to be properly formatted packet */
-    *maxClients = inbuff[15];
-    *currentClients = inbuff[16];
+    *maxClients = inbuff[14];
+    *currentClients = inbuff[15];
 
     return 0;
 }
@@ -256,12 +255,12 @@ static int checkAutoDRMsg(char* inbuff,int* maxClients,int* currentClients)
 /*Return: -1 if a failure occured while trying to transfer the listing.     */
 /*        0 on successful transfer and parse.                               */
 /****************************************************************************/
-int getServerDirectoryListing(char* serverIPAddress, int p2pMode)
+int getServerDirectoryListing(char* serverIPAddress)
 {
     char* destBuffer = NULL;
     
     /* Send the Packet and Receive the directory listing (normal TFTP) */
-    if(getDirListing(serverIPAddress,&destBuffer, p2pMode) < 0)
+    if(getDirListing(serverIPAddress,&destBuffer) < 0)
     {
         return -1;
     }
@@ -289,8 +288,7 @@ int getServerDirectoryListing(char* serverIPAddress, int p2pMode)
 /*        0 on successful connection initiation.                            */
 /****************************************************************************/
 int initiateConnection(SOCKET sock, char* ipaddress, int timeoutSeconds,
-                       int desiredConnects, int* allowedConnects,
-                       int p2pMode)
+                       int desiredConnects, int* allowedConnects)
 {
     struct sockaddr_in to;
     fd_set etherfds;
@@ -304,9 +302,6 @@ int initiateConnection(SOCKET sock, char* ipaddress, int timeoutSeconds,
     timeoutVal.tv_sec = timeoutSeconds;
     timeoutVal.tv_usec = 0;
 
-    /* Invalid IP Address */
-    if(ipaddress == NULL)
-        return -1;
 
     /***********************************/
     /* Send connection request message */
@@ -321,14 +316,7 @@ int initiateConnection(SOCKET sock, char* ipaddress, int timeoutSeconds,
     id = htons(OPC_CON_RQST);
     memcpy(&tmp[0],&id,2);
     strcpy(&tmp[2],"TFTP_CONRQ");
-    if(p2pMode)
-    {
-        strcpy(&tmp[13],"P2P");
-    }
-    else
-    {
-        strcpy(&tmp[13],"C/S");
-    }
+    strcpy(&tmp[13],"C/S");
     tmp[17] = (char)desiredConnects;
 
     /* Send the packet */

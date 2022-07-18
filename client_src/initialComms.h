@@ -13,10 +13,9 @@
 /***********************/
 int sendServerDiscoveryRqst(SOCKET sock, int timeoutSeconds);
 int serverFailDetect(char* ipaddress);
-int getServerDirectoryListing(char* serverIPAddress, int p2pMode);
+int getServerDirectoryListing(char* serverIPAddress);
 int initiateConnection(SOCKET sock, char* ipaddress, int timeoutSeconds,
-                       int desiredConnects, int* allowedConnects, 
-                       int p2pMode);
+                       int desiredConnects, int* allowedConnects);
 
 
 

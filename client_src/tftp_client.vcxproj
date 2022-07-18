@@ -94,11 +94,9 @@
     <ClCompile Include="clientMain.cpp" />
     <ClCompile Include="cmn_util.cpp" />
     <ClCompile Include="createMD5.cpp" />
-    <ClCompile Include="FileListing.cpp" />
     <ClCompile Include="initialComms.cpp" />
     <ClCompile Include="serverDatabase.cpp" />
     <ClCompile Include="sockfctns.cpp" />
-    <ClCompile Include="tftp_operations.cpp" />
     <ClCompile Include="writeFctns.cpp" />
     <ClCompile Include="dlQueueManagement.cpp" />
     <ClCompile Include="serverDirListingRoutines.cpp" />
@@ -110,16 +108,13 @@
     <ClInclude Include="createMD5.h" />
     <ClInclude Include="dlQueueManagement.h" />
     <ClInclude Include="downloadStatus.h" />
-    <ClInclude Include="FileListing.h" />
     <ClInclude Include="fileSystemType.h" />
-    <ClInclude Include="FS_datastructures.h" />
     <ClInclude Include="initialComms.h" />
     <ClInclude Include="opcode_definitions.h" />
     <ClInclude Include="resource.h" />
     <ClInclude Include="serverDatabase.h" />
     <ClInclude Include="serverDirListingRoutines.h" />
     <ClInclude Include="sockfctns.h" />
-    <ClInclude Include="tftp_operations.h" />
     <ClInclude Include="writeFctns.h" />
   </ItemGroup>
   <ItemGroup>

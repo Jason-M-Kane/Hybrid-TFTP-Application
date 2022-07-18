@@ -7,7 +7,7 @@
 /***********************/
 /* Function Prototypes */
 /***********************/
-int getDirListing(char* serverIPAddress, char** destBuffer, int p2pMode);
+int getDirListing(char* serverIPAddress, char** destBuffer);
 
 
 

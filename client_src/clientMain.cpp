@@ -1,9 +1,14 @@
 /****************************************************************************/
 /* clientMain.c - A GUI Hybrid TFTP Client for Windows                      */
 /*                                                                          */
-/* Jason Kane 8123  1/26/10                                                 */
+/* Jason Kane 8123  1/16/10                                                 */
 /*                                                                          */
 /* 1.10 - Initial Release.  GigE has a theoretical max of 119.2 MB/sec      */
+/* 1.11 - Fixed Bug with final ack.  Added ability to modify write params.  */
+/*        Fixed multiple server bug.                                        */
+/* 1.12 - Fixed a bug in the refresh button code.                           */
+/* 1.13 - Added hash checking disable/enable button, defaulted write size to*/
+/*        4MB                                                               */
 /****************************************************************************/
 #pragma warning(disable : 4996)
 
@@ -28,8 +33,6 @@
 #include "serverDatabase.h"
 #include "cmn_util.h"
 #include "downloadStatus.h"
-#include "FileListing.h"
-#include "tftp_operations.h"
 
 
 /***********/
@@ -40,9 +43,6 @@
 
 #define MAX_SIMULT_CONNECTIONS  2 //Max requested connections per download
 #define DESIRED_CONNECT_PER_DL	2 //Desired seperate connections per download
-
-#define CS_DIRLISTING       1
-#define P2P_DIRLISTING      2
 
 
 /***********/
@@ -57,8 +57,7 @@ static char errorString[200];
 SOCKET querySocket;
 HWND G_hWnd;                            //Global handle to the main dialog
 HANDLE G_h_KillProgram;                 //Global handle to kill the program
-int G_MAXPEERS = 2;                     //P2P - Max share Peers
-int G_MAXPEERS_CONNECTED = 0;           //P2P - Max share peers connected
+int G_DisableHashChecking = FALSE;
 
 /* Virtual filesystem related variables */
 fsItem** G_rootFSPtr = NULL;
@@ -69,8 +68,10 @@ int G_lastnumservers = 0;
 int G_TotalAllowedConnections = MAX_SIMULT_CONNECTIONS;
 int G_TotalUsedConnections = 0;
 
-/* Peer to Peer Mode Globals */
-int G_P2PMode = FALSE;  /* Enables P2P mode when true */
+extern int G_TEMP_BUFFER_BACKLOG;             /* # of backlog buffers per thread */
+extern int G_WRITE_BUFFER_SIZE;      /* Size of the client's write buffer in memory */
+                                            /* Must be less than 2GB or overlap of incomming packets may occur */
+extern int G_WRITE_SIZE;
 
 
 /***********************/
@@ -78,16 +79,6 @@ int G_P2PMode = FALSE;  /* Enables P2P mode when true */
 /***********************/
 BOOL CALLBACK MainDialog(HWND hWnd, UINT message, WPARAM wParam,LPARAM lParam);
 DWORD WINAPI manageHybridDownloads(LPVOID lpParam);
-DWORD WINAPI P2P_Server_Thread(LPVOID lpParam);
-int testDirRqst(char* buff);
-int sendDirectoryListing(SOCKET sock, struct sockaddr_in to, 
-                         char* fsListing);
-void sendFilereqP2PAck(SOCKET sock, struct sockaddr_in from,
-                       unsigned int sessionId, unsigned short blockId);
-int testFileRequest(char* inbuff,struct sockaddr_in mainServerInfo,
-                    remoteP2PStruct* remoteInfo);
-BOOL CALLBACK PeerDialog(HWND hWnd, UINT message, 
-                         WPARAM wParam, LPARAM lParam);
 
 
 
@@ -159,12 +150,12 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 
 
 
+
 /******************************************************************************/
 /*Function: DialogProc                                                        */
 /*Purpose: Processes messages for the main dialog.                            */
 /*Returns: LRESULT                                                            */
 /******************************************************************************/
-char* G_P2P_Filesystem = NULL;
 BOOL CALLBACK MainDialog(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 {
 	switch (message)
@@ -173,13 +164,20 @@ BOOL CALLBACK MainDialog(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
         /* Init the dialog */
 		case WM_INITDIALOG: 
 		{
-            DWORD ThreadId;
             G_hWnd = hWnd;
             HIMAGELIST hImageList;      // Image list array hadle
             HBITMAP hBitMap;            // bitmap handler
 
 			SetDlgItemText(hWnd, IDC_OUTPUTDIR, G_outputDir);
+			//InitCommonControls(); //Required to get the treeview to work
 			hTree=GetDlgItem(hWnd,IDC_FILE_TREE);
+
+            SetDlgItemInt(hWnd,IDC_wbedit,G_WRITE_BUFFER_SIZE,0);
+            SetDlgItemInt(hWnd,IDC_wsedit,G_WRITE_SIZE,0);
+            SetDlgItemInt(hWnd,IDC_bufedit,G_TEMP_BUFFER_BACKLOG,0);
+
+            //Uncheck the disable hash checking button
+            CheckDlgButton(hWnd,IDC_DISABLE_HASH,0);
 
             /**********************************************************/
 			/* create the image list and put it into the tree control */
@@ -195,25 +193,6 @@ BOOL CALLBACK MainDialog(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 
             /* Insert virtual file system for each server */
             Populate_Listview(hWnd);
-
-            /***********************/
-            /* Operate in P2P Mode */
-            /***********************/
-            G_P2PMode = TRUE;
-            DialogBox(hInst, (LPCTSTR)IDD_MAXPEER_DLG, NULL, (DLGPROC)PeerDialog);
-
-            /* Start up the P2P Server Thread */
-            createFileSystemListing("C:\\share\\", &G_P2P_Filesystem);
-	        if(CreateThread(NULL,0,P2P_Server_Thread,NULL,0,&ThreadId) == NULL)
-            {
-                MessageBox(hWnd,"Error, unable to spawn p2p server thread","P2P Client Error",MB_OK);
-                reportError("Error, unable to spawn p2p server thread",0,0);
-            }
-            if(CreateThread(NULL,0,Connection_Keepalive_Thread,NULL,0,&ThreadId) == NULL)
-            {
-                MessageBox(hWnd,"Error, unable to spawn p2p keepalive thread","P2P Client Error",MB_OK);
-                reportError("Error, unable to spawn p2p keepalive thread",0,0);
-            }
 		}
 		break;
 
@@ -292,6 +271,21 @@ BOOL CALLBACK MainDialog(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 			switch (LOWORD(wParam)) // what we pressed on?
 			{
 
+                case IDC_DISABLE_HASH:
+                {
+                    if(IsDlgButtonChecked(hWnd,IDC_DISABLE_HASH) == BST_CHECKED)
+                    {
+                        //Disable Hash Checking
+                        G_DisableHashChecking = TRUE;
+                    }
+					else
+                    {
+                        //Enable Hash Checking
+                        G_DisableHashChecking = FALSE;
+                    }
+                    break;
+                }
+
                 case IDC_DOWNLOAD:
                 {
                     /* Add to the download queue and display it */
@@ -300,6 +294,44 @@ BOOL CALLBACK MainDialog(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
                 }
                 break;
 
+                /* Set write related variables */
+                case IDC_SET1:
+                {
+                    /* Ensure buffer size is divisible by 65464 */
+                    int div;
+                    G_WRITE_BUFFER_SIZE = GetDlgItemInt(hWnd,IDC_wbedit,NULL,0);
+                    div = G_WRITE_BUFFER_SIZE / 65464;
+                    G_WRITE_BUFFER_SIZE = 65464 * div;
+                    if(G_WRITE_BUFFER_SIZE <= 0)
+                        G_WRITE_BUFFER_SIZE = 65464;
+                    SetDlgItemInt(hWnd,IDC_wbedit,G_WRITE_BUFFER_SIZE,0);
+                }
+                break;
+                case IDC_SET2:
+                {
+                    int tmp;
+                    char sharepathroot[32];
+                    DWORD secPerCluster,bytesPerSector,numFreeClusters,totalNumClusters;
+                    memset(sharepathroot,0,32);
+                    strncpy(sharepathroot,G_outputDir,3);
+                    GetDiskFreeSpace(sharepathroot,&secPerCluster,&bytesPerSector,&numFreeClusters,&totalNumClusters);
+                    G_WRITE_SIZE = GetDlgItemInt(hWnd,IDC_wsedit,NULL,0);
+
+                    tmp = G_WRITE_SIZE / bytesPerSector;
+                    G_WRITE_SIZE = tmp * bytesPerSector;
+                    if(G_WRITE_SIZE <= 0)
+                        G_WRITE_SIZE = bytesPerSector;
+                    SetDlgItemInt(hWnd,IDC_wsedit,G_WRITE_SIZE,0);
+                }
+                break;
+                case IDC_SET3:
+                {
+                    G_TEMP_BUFFER_BACKLOG = GetDlgItemInt(hWnd,IDC_bufedit,NULL,0);
+                    if(G_TEMP_BUFFER_BACKLOG <= 0)
+                        G_TEMP_BUFFER_BACKLOG = 1;
+                    SetDlgItemInt(hWnd,IDC_bufedit,G_TEMP_BUFFER_BACKLOG,0);
+                }
+                break;
 
                 /* Browse for local download folder */
                 case IDC_BROWSE:
@@ -343,19 +375,9 @@ BOOL CALLBACK MainDialog(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
                 }
 
 
-                /* Disconnect Button - Close all active connections */
-                case IDC_DISCONNECT:
-                {
-                    Disconnect_All();
-                    G_MAXPEERS_CONNECTED = 0;
-                    break;
-                }
 
 
-
-                /* Disconnect from all existing P2P servers.                     */
-                /* Query for available servers, Connect & get directory listings */
-                /* of the "G_MAXPEERS" least loaded # of servers that reply      */
+                /* Query for available servers, get directory listings of all that reply */
                 case IDC_QUERY:
                 {
                     int rtnval,x;
@@ -416,7 +438,7 @@ BOOL CALLBACK MainDialog(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
                             {
                                 G_rootFSPtr[x] = NULL;
 
-                                if(getServerDirectoryListing(ptrIpaddrString, G_P2PMode) < 0)
+                                if(getServerDirectoryListing(ptrIpaddrString) < 0)
                                 {
                                     sprintf(errorString,"Error receiving server directory listing from %s",ptrIpaddrString);
                                     MessageBox(hWnd,errorString,"Server Directory Listing Error",MB_OK);
@@ -426,7 +448,7 @@ BOOL CALLBACK MainDialog(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
                                 {
                                     char tmp[50];
                                     /* Add to the virtual file system and user treeview GUI */
-                                    sprintf(tmp,"%s_root_%s%%_Loaded",ptrIpaddrString,getLoadValStr(ptrIpaddrString));
+                                    sprintf(tmp,"%s_root",ptrIpaddrString);
                                     G_rootFSPtr[G_totalTreeRootItems] = (fsItem*)malloc(sizeof(fsItem));
                                     if(G_rootFSPtr[G_totalTreeRootItems] == NULL)
                                     {
@@ -468,56 +490,8 @@ BOOL CALLBACK MainDialog(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 			case WM_CLOSE: //Close the dialog
 			{
                 long prev;
-                /* End all existing sessions */
-                Disconnect_All();
-                G_MAXPEERS_CONNECTED = 0;
                 ReleaseSemaphore(G_h_KillProgram,1,&prev);
-
-                if(G_P2P_Filesystem != NULL)
-                {
-                    free(G_P2P_Filesystem);
-                    G_P2P_Filesystem = NULL;
-                }
 				EndDialog(hWnd,0); 
-			}
-			break;
-		}
-		break;
-	}
-	return 0;
-}
-
-
-
-
-BOOL CALLBACK PeerDialog(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
-{
-	switch (message)
-	{ 	 
-        /* Init the dialog */
-		case WM_INITDIALOG: 
-		{
-			SetDlgItemText(hWnd, IDC_Peeredit, "2");
-		}
-		break;
-
-		case WM_COMMAND: // Controling the Buttons
-		{
-			switch (LOWORD(wParam)) // what we pressed on?
-			{
-                case IDOK:
-                {
-                    /* Add to the download queue and display it */
-                    G_MAXPEERS = GetDlgItemInt(hWnd,IDC_Peeredit, NULL ,FALSE);
-                    EndDialog(hWnd,0); 
-                }
-                break;
-            }
-			break;
-
-			case WM_CLOSE: //Close the dialog
-			{
-                return FALSE;				
 			}
 			break;
 		}
@@ -542,13 +516,12 @@ DWORD WINAPI manageHybridDownloads(LPVOID lpParam)
     int maxSimultaneousDownloads = MAX_SIMULT_DOWNLOADS;
     int currentNumDownloads = 0;
     int allowedConnects;
-    int tmp;
     LARGE_INTEGER fileSize;
     unsigned short firstPort = 2000;
 
     while(1)
     {
- 		/* Determine when to start downloading the next item on the queue */
+		/* Determine when to start downloading the next item on the queue */
         if( (currentNumDownloads < MAX_SIMULT_DOWNLOADS) && 
 			((G_TotalAllowedConnections-G_TotalUsedConnections) > 0) )
         {
@@ -618,9 +591,10 @@ DWORD WINAPI manageHybridDownloads(LPVOID lpParam)
                         break;
                 }
 
-                /* Attempt to initiate a "connection" with the remote server */
+
+	            /* Attempt to initiate a "connection" with the remote server */
                 if( initiateConnection(nextQueuedItem->sockArray[0], nextQueuedItem->ipaddress,
-                    5, nextQueuedItem->numConnectionsToUse, &allowedConnects,G_P2PMode) < 0)
+                    5, nextQueuedItem->numConnectionsToUse, &allowedConnects) < 0)
 	            {
                     MessageBox(NULL, "Error initiating connection with server, downloading FAILED.", "Connect Error", MB_OK);
                     for(x = 0; x < nextQueuedItem->numConnectionsToUse; x++)
@@ -631,24 +605,6 @@ DWORD WINAPI manageHybridDownloads(LPVOID lpParam)
                     updateLVItem(nextQueuedItem);
                     continue;
 	            }
-
-                /* See if we should connect to more servers to share files with peers */
-                if(G_MAXPEERS_CONNECTED > 0)
-                {
-                    tmp = 1;
-                    while( (tmp == 1) && (G_MAXPEERS_CONNECTED < G_MAXPEERS) )
-                    {
-                        if( initiateConnection(nextQueuedItem->sockArray[0], getUnconnectedServerIPaddr(), 2,
-                                1, &tmp, TRUE) >= 0 )
-                        {
-                            G_MAXPEERS_CONNECTED++;
-                        }
-                        else
-                        {
-                            break;
-                        }
-                    }
-                }
 
                 /* If the server is going to limit us from having the max# of connections that we want */
                 /* then free up the extra connetions so that another download process can use them.    */
@@ -754,212 +710,4 @@ DWORD WINAPI manageHybridDownloads(LPVOID lpParam)
 
     ExitThread(0);
     return 0;
-}
-
-
-
-
-/*****************************************************************************/
-/* P2P_Server_Thread - Handles P2P File and directory Requests.              */
-/* Returns:  0 on success, -1 on failure.                                    */
-/*****************************************************************************/
-DWORD WINAPI P2P_Server_Thread(LPVOID lpParam)
-{
-    static remoteP2PStruct p2pData;
-    static char inbuff[MAX_PSIZE];         /* Request Buffer           */
-    SOCKET listeningSocket;                /* Udp Server Socket        */
-    struct sockaddr_in from;               /* Used for select */
-    fd_set etherfds;                       /* Used for select */
-    int rval, size, dirReqType;
-    HANDLE hThread = NULL;
-    DWORD ThreadId = 0;
-    listeningSocket = INVALID_SOCKET;      /* Init */
-
-    /* Listen on the specified server udp port */
-    if((listeningSocket = udpOpenBindSocket(690)) == INVALID_SOCKET)
-    {
-        reportError("Local p2p server: Call to udpOpenBindSocket() failed, aborting.\n",0,0);
-        return -1;
-    }
-
-    /*************************************************************************/
-    /* Set up select to keep waiting for new connections to come in on the   */
-    /* listening port.  Respond to: Autodetect packets, directory listing    */
-    /* request packets, Connection Request Packets, or RRQ packets.  Only    */
-    /* respond to a RRQ packet if a connection was previously established.   */
-    /*************************************************************************/
-    while(1)
-    {
-        FD_ZERO(&etherfds);
-        FD_SET(listeningSocket,&etherfds);
-        rval = select(((int)listeningSocket)+1,&etherfds,NULL,NULL,NULL);
-
-
-        /* Check for activity detected on the port. */
-        if(FD_ISSET(listeningSocket, &etherfds))
-        {
-            //Receive a Packet
-            size = udp_recv(listeningSocket, inbuff, MAX_PSIZE,&from);
-            if(size < 0)
-            {
-                reportError("Error Recving Packet on port 69.\n",0,0);
-                continue;
-            }
-
-            /***********************************************************/
-            /* Check for a P2P directory listing req or File Request   */
-            /* Ignore the requestor if you are not currently connected */
-            /***********************************************************/
-            if( getServerConnectionStatus(inet_ntoa(from.sin_addr)) < 0)
-            {
-                continue;
-            }
-
-            //Directory Rqst Packet
-            if((dirReqType=testDirRqst(inbuff)) > 0)
-            {
-                if(dirReqType == P2P_DIRLISTING)
-                {
-                    optsData data; 
-                    data.blkSizeNeg = TRUE;
-	                data.timeoutNeg = TRUE;
-	                data.tsizeNeg = TRUE;
-	                data.blkSize = 65464;
-                    data.tsize = strlen(G_P2P_Filesystem)+1;
-                    data.timeout = 5;
-                    dir_transfer(listeningSocket,from,G_P2P_Filesystem,data);
-                }
-                continue;
-            }
-
-            //P2P File Request
-            if(testFileRequest(inbuff,from,&p2pData) > 0)
-            {
-                /* Send an Ack to the Server that sent the request */
-                sendFilereqP2PAck(listeningSocket, from,p2pData.sessionID,
-                    p2pData.blockID);
-                sendPeerMsg(p2pData.filename,p2pData.offset,p2pData.blockID,
-                    p2pData.ipaddr,p2pData.port);
-                continue;
-            }
-
-        }
-        else if(rval == SOCKET_ERROR)
-        {
-            reportError("Select Error Detected.",WSAGetLastError(),1);
-            break;
-        }
-    }
-
-
-    return 0;
-}
-
-
-
-
-/*****************************************************************************/
-/* sendFilereqP2PAck - Sends the server ack for P2P File Requests.           */
-/* Returns:  0 on success, -1 on failure.                                    */
-/*****************************************************************************/
-void sendFilereqP2PAck(SOCKET sock, struct sockaddr_in from,
-                       unsigned int sessionId, unsigned short blockId)
-{
-    char ackbuffer[8];
-    unsigned short id;
-
-    /* Build the P2P Ack Msg: AckId(04) SessionId BlockId */
-    memset(ackbuffer,0,8);
-    id = htons(OPC_ACK);
-    memcpy(&ackbuffer[0],&id,2);
-    sessionId = htonl(sessionId);
-    memcpy(&ackbuffer[2],&sessionId,4);
-    blockId = htons(blockId);
-    memcpy(&ackbuffer[6],&blockId,2);
-
-    udp_send(sock,ackbuffer,8,from);
-
-    return;
-}
-
-
-
-
-/*****************************************************************************/
-/* testFileRequest - Tests for a P2P File Request.                           */
-/* Returns:  1 on success, -1 on failure.                                    */
-/*****************************************************************************/
-int testFileRequest(char* inbuff,struct sockaddr_in mainServerInfo,
-                    remoteP2PStruct* remoteInfo)
-{
-    char tmp[32];
-    int index;
-    unsigned short id;
-
-    /* Create the comparison packets */
-    memset(tmp,0,32);
-    id = htons(OPC_DIRRQ);
-    memcpy(&tmp[0],&id,2);
-    strcpy(&tmp[2],"TFTP_P2PSEND");
-
-    /* Check for msg validity */
-    if(memcmp(tmp,inbuff,15) != 0)
-    {
-        return -1;
-    }
-
-    /* Valid Msg, Get the SessionID, Filename,    */
-    /* Offset, Dest IP Address/Port, and block ID */
-    remoteInfo->sessionID = htonl( *((unsigned int*)&inbuff[15]));
-    strcpy(remoteInfo->filename ,&inbuff[19]);
-    index = 19 + (int)strlen(&inbuff[19]) + 1;
-    strcpy(tmp,&inbuff[index]);
-    remoteInfo->offset = (unsigned __int64)_atoi64(tmp);
-    index = (int)strlen(&inbuff[index]) + index + 1;
-    strcpy(remoteInfo->ipaddr,&inbuff[index]);
-    index = (int)strlen(&inbuff[index]) + index + 1;
-    remoteInfo->port = htons( *((unsigned short*)&inbuff[index]) );
-    index+=2;
-    remoteInfo->blockID = htons( *((unsigned short*)&inbuff[index]) );
-
-    /* Successful Receipt */
-    return 1;
-}
-
-
-
-
-/****************************************************************************/
-/*Function:  testDirRqst                                                    */
-/*Purpose:   Determines if the packet is a directory request.               */
-/*Input: the buffer containing the packet.                                  */
-/*Return: -1 if not a valid DIRRQ, > 0 if it is a valid DIRRQ.              */
-/****************************************************************************/
-int testDirRqst(char* buff)
-{
-    char tmpA[32];
-    char tmpB[32];
-    unsigned short id;
-
-    /* Create the comparison packets */
-    memset(tmpA,0,32);
-    id = htons(OPC_DIRRQ);
-    memcpy(&tmpA[0],&id,2);
-    strcpy(&tmpA[2],"TFTP_DIRRQ");
-    strcpy(&tmpA[13],"C/S");
-    memcpy(tmpB,tmpA,32);
-    strcpy(&tmpB[13],"P2P");
-
-    if(memcmp(tmpA,buff,17) == 0)
-    {
-        return CS_DIRLISTING;
-    }
-
-    if(memcmp(tmpB,buff,17) == 0)
-    {
-        return P2P_DIRLISTING;
-    }
-
-    /* Match Not Detected */
-    return -1;
 }

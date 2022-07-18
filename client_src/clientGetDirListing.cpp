@@ -32,13 +32,12 @@ static __int64 G_DirListing_Tsize = 0;
 /***********************/
 /* Function Prototypes */
 /***********************/
-int getDirListing(char* serverIPAddress, char** destBuffer, int p2pMode);
-static int createDirReqMsg(char* dirReqMsg, int bufSize, int p2pMode);
+int getDirListing(char* serverIPAddress, char** destBuffer);
+static int createDirReqMsg(char* dirReqMsg, int bufSize);
 static int initiateDirReq(char* tftpBuf, int tftpBufSize, SOCKET sock, 
                    struct sockaddr_in remote, unsigned short* port, 
                    char** destBuffer, unsigned int* destBufferSize,
-                   unsigned int* remainingSize, unsigned int* xferSize, 
-                   int p2pMode);
+                   unsigned int* remainingSize, unsigned int* xferSize);
 static int transferTFTPDirData(char* tftpBuf, int tftpBufSize,
                      SOCKET sock, struct sockaddr_in remote,
                      char** destBuffer, unsigned int* destBufSize,
@@ -58,7 +57,7 @@ static int copyDataToDirBuffer(char** dest, unsigned int* destBufferSize,
 /* getDirListing - Handles a directory listing request.                      */
 /* Returns:  0 on success, -1 on failure.                                    */
 /*****************************************************************************/
-int getDirListing(char* serverIPAddress, char** destBuffer, int p2pMode)
+int getDirListing(char* serverIPAddress, char** destBuffer)
 {
     char* tftpBuffer = NULL;
     unsigned short localport;           // Client Port
@@ -134,7 +133,7 @@ int getDirListing(char* serverIPAddress, char** destBuffer, int p2pMode)
     /* Send TFTP Directory Request to Server */
     /*****************************************/
     if(initiateDirReq(tftpBuffer, tftpBufSize, sfd, remoteSockAddr,&port,
-        destBuffer,&destBufferSize, &remainingSize,&sizeDirListingBytes, p2pMode) < 0)
+        destBuffer,&destBufferSize, &remainingSize,&sizeDirListingBytes) < 0)
     {
         free(tftpBuffer);
         free(*destBuffer);
@@ -181,24 +180,17 @@ int getDirListing(char* serverIPAddress, char** destBuffer, int p2pMode)
 /* createDirReqMsg - Creates a Directory Request Message.                    */
 /* Returns:  Size of Request Msg.                                            */
 /*****************************************************************************/
-static int createDirReqMsg(char* dirReqMsg, int bufSize, int p2pMode)
+static int createDirReqMsg(char* dirReqMsg, int bufSize)
 {
     unsigned short id = 0;
 
     /* Build Directory Request Message */
-    /* 98 TFTP_DIRRQ\0 C/S\0  OR  98 TFTP_DIRRQ\0 P2P\0 */
+    /* 98 TFTP_DIRRQ\0 C/S\0 */
     memset(dirReqMsg,0,20);
     id = htons(OPC_DIRRQ);
     memcpy(&dirReqMsg[0],&id,2);
     strcpy(&dirReqMsg[2],"TFTP_DIRRQ");
-    if(!p2pMode)
-    {
-        strcpy(&dirReqMsg[13],"C/S");
-    }
-    else
-    {
-        strcpy(&dirReqMsg[13],"P2P");
-    }
+    strcpy(&dirReqMsg[13],"C/S");
     
     return 17;
 }
@@ -213,8 +205,7 @@ static int createDirReqMsg(char* dirReqMsg, int bufSize, int p2pMode)
 static int initiateDirReq(char* tftpBuf, int tftpBufSize, SOCKET sock, 
                    struct sockaddr_in remote, unsigned short* port, 
                    char** destBuffer, unsigned int* destBufferSize,
-                   unsigned int* remainingSize, unsigned int* xferSize,
-                   int p2pMode)
+                   unsigned int* remainingSize, unsigned int* xferSize)
 {
     int reqSize = 0;
     int dataPktSize = 0;
@@ -227,7 +218,7 @@ static int initiateDirReq(char* tftpBuf, int tftpBufSize, SOCKET sock,
     timeoutcnt = 0;
 
     /* Create the TFTP Dir Request Message */
-    reqSize = createDirReqMsg(tftpBuf, tftpBufSize, p2pMode);
+    reqSize = createDirReqMsg(tftpBuf, tftpBufSize);
 
     /**********************************************************************/
     /* Continue to Send the Request until an OACK is received, or timeout */

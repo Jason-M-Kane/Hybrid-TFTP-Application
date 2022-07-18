@@ -17,6 +17,13 @@
 #include "downloadStatus.h"
 
 
+
+int G_TEMP_BUFFER_BACKLOG = 20;             /* # of backlog buffers per thread */
+int G_WRITE_BUFFER_SIZE = (65464*512);      /* Size of the client's write buffer in memory */
+                                            /* Must be less than 2GB or overlap of incomming packets may occur */
+int G_WRITE_SIZE = (4*1024*1024);           /* Minimal amount of Data to write to disk     */
+
+
 /***********************/
 /* Function Prototypes */
 /***********************/
@@ -56,14 +63,14 @@ int initStorageElements(writeInfo* writeInformation,
 
     /* Allocate memory for the temporary storage buffer */
     writeInformation->tempStorageArray = (char*)malloc(TEMP_BUFFER_INDIV_SIZE*
-        TEMP_BUFFER_BACKLOG*writeInformation->numThreads);
+        G_TEMP_BUFFER_BACKLOG*writeInformation->numThreads);
 
     /* Allocate memory for temp storage information keeping array */
     writeInformation->storageInfoArray = (tmpStorageType*)malloc((sizeof(tmpStorageType))*
-        TEMP_BUFFER_BACKLOG*writeInformation->numThreads);
+        G_TEMP_BUFFER_BACKLOG*writeInformation->numThreads);
 
     /* Allocate memory for the write buffer */
-    writeInformation->wbuf = (char*)malloc(WRITE_BUFFER_SIZE);
+    writeInformation->wbuf = (char*)malloc(G_WRITE_BUFFER_SIZE);
 
     /* Allocate memory for the thread handles */
     writeInformation->h_ThreadHandle = (HANDLE*)malloc((sizeof(HANDLE))* writeInformation->numThreads);
@@ -111,7 +118,7 @@ int initStorageElements(writeInfo* writeInformation,
     }
 
     /* Init Temp Storage Variables */
-    writeInformation->totalNumStorageElements = TEMP_BUFFER_BACKLOG*queuedItemToDownload->numConnectionsToUse;
+    writeInformation->totalNumStorageElements = G_TEMP_BUFFER_BACKLOG*queuedItemToDownload->numConnectionsToUse;
     writeInformation->sizePerStorageElement = TEMP_BUFFER_INDIV_SIZE;
     if(queuedItemToDownload->status == RESUMING)
     {
@@ -131,7 +138,7 @@ int initStorageElements(writeInfo* writeInformation,
     /* Init Write buffer variables */
     strcpy(writeInformation->fnameDst,queuedItemToDownload->dLItem.localfullpathAndName);
     writeInformation->freeSpacePtr = writeInformation->writePtr = writeInformation->wBufferHead = writeInformation->wbuf;
-    writeInformation->wBufferTail = writeInformation->wbuf + WRITE_BUFFER_SIZE - 1;
+    writeInformation->wBufferTail = writeInformation->wbuf + G_WRITE_BUFFER_SIZE - 1;
     writeInformation->currentWbufSize = 0;
 
 
@@ -319,7 +326,7 @@ int addToWriteBuffer(unsigned short blockNumber, char* data, int size,
     /* Need several sequential blocks of data to be available.   */
     /* This will minimize I/O transactions in memory.            */
     /*************************************************************/
-    finalCheck = (TEMP_BUFFER_BACKLOG/2);
+    finalCheck = (G_TEMP_BUFFER_BACKLOG/2);
     if(finalCheck > ptrWInfo->totalNumStorageElements)
         finalCheck = ptrWInfo->totalNumStorageElements-1;
     if(finalCheck == 0)
@@ -363,7 +370,7 @@ int addToWriteBuffer(unsigned short blockNumber, char* data, int size,
         ReleaseSemaphore(ptrWInfo->h_WriteVars,1,&prev);
 
         /* Delay until the write buffer is available */
-        while((copySize + localWbufSize) > WRITE_BUFFER_SIZE)
+        while((copySize + localWbufSize) > (unsigned int)G_WRITE_BUFFER_SIZE)
         {
             /* Cant add the data, buffer full */
 
@@ -484,7 +491,7 @@ DWORD WINAPI writeToDisk(LPVOID lpParam)
     ptrWInfo = (writeInfo*)lpParam;
 
     /* Allocate memory for the scratch space */
-    scratchPad = (char*)malloc(WRITE_SIZE);
+    scratchPad = (char*)malloc(G_WRITE_SIZE);
     if(scratchPad == NULL)
     {
         ReleaseSemaphore(ptrWInfo->h_WriteFail,1,&prev);
@@ -559,18 +566,18 @@ DWORD WINAPI writeToDisk(LPVOID lpParam)
         ReleaseSemaphore(ptrWInfo->h_WriteVars,1,&prev);
 
         localWbufWritten = 0;
-        while(localWbufSize > WRITE_SIZE)
+        while(localWbufSize > G_WRITE_SIZE)
         {
             /* Check to see if the scratch pad will be needed */
             /* scratch pad used for wraparound case          */
             remainingSpace = (unsigned int)(ptrWInfo->wBufferTail - ptrWInfo->writePtr) + 1;
-            if(remainingSpace >= WRITE_SIZE)
+            if(remainingSpace >= (unsigned int)G_WRITE_SIZE)
             {
                 /* Normal Case */
                 if( WriteFile(
                     hOutFile,                  // open file handle
                     ptrWInfo->writePtr,        // start of data to write
-                    WRITE_SIZE,                // number of bytes to write
+                    G_WRITE_SIZE,                // number of bytes to write
                     &bytesWritten,             // number of bytes that were written
                     NULL) == FALSE)            // no overlapped structure
                 {
@@ -592,14 +599,14 @@ DWORD WINAPI writeToDisk(LPVOID lpParam)
                 /* Wraparound Case */
                 memmove(scratchPad,ptrWInfo->writePtr,remainingSpace);
                 ptrWInfo->writePtr = ptrWInfo->wBufferHead;
-                leftover = WRITE_SIZE - remainingSpace;
+                leftover = G_WRITE_SIZE - remainingSpace;
                 memmove(&scratchPad[remainingSpace],ptrWInfo->writePtr,leftover);
                 ptrWInfo->writePtr += leftover;
 
                 if( WriteFile(
                     hOutFile,                  // open file handle
                     scratchPad,                // start of data to write
-                    WRITE_SIZE,                // number of bytes to write
+                    G_WRITE_SIZE,                // number of bytes to write
                     &bytesWritten,             // number of bytes that were written
                     NULL) == FALSE)            // no overlapped structure
                 {
